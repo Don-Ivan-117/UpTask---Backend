@@ -1,0 +1,307 @@
+--- Comandos ---
+- npm init --y : Crear package JSON vacio (no autor, no licensia, no nada)
+- npm i express
+- npm i express-validator
+- npm i -D @types/express
+- npm i -D nodemon ts-node typescript
+- npm i colors
+- npm i moongose
+- npm i dotenv
+- npm i cors
+- npm i morgan
+- npm i -D @types/cors
+- npm i -D @types/morgan
+
+--- MongoDB ---
+Mongoose (similar a Prisma o Sequelize, pero enfocado en bases de datos no relacionales).
+
+Es un ODM (Object Document Mapper) para Node.js.
+A diferencia de un ORM, trabaja con documentos en lugar de tablas, ya que los datos en MongoDB se almacenan dentro de colecciones.
+
+Al igual que Sequelize, usa Modelos para definir la estructura y los tipos de datos de cada documento.
+Además, ofrece una amplia variedad de métodos para realizar operaciones CRUD fácilmente.
+
+Suele combinarse con otras dependencias para manejar autenticación, cifrado de contraseñas y otras funcionalidades del backend.
+
+- Conectarse con Mongo Compass
+
+MongoDB Compass es la interfaz gráfica para manejar nuestras bases de datos de MongoDB.
+Para conectarte, primero necesitas crear una cuenta en MongoDB, una base de datos y un usuario con su respectiva contraseña.
+Luego:
+    - En tu panel, ve a Database → Clusters → Connect.
+    - Elige la opción Compass.
+    - Copia la cadena de conexión que aparece en el modal.
+    - Abre MongoDB Compass, pega la cadena y reemplaza el fragmento <db_password> con tu contraseña real.
+
+- Conectarse a MongoDb desde el Back-end
+
+En el archivo config/db.ts se define una función asíncrona para establecer la conexión con la base de datos mediante Mongoose.
+La función se ejecuta dentro de un bloque try-catch:
+    - En caso de error (catch), se muestra un mensaje en consola y se detiene la ejecución con process.exit(1), evitando que el servidor continúe sin conexión.
+    - En caso de éxito (try), se conecta usando la cadena de conexión guardada en una variable de entorno.
+
+La variable de entorno para la conexion es la misma que usamos para la version grafica en Mongoose Compass. 
+
+- Modelos
+
+Los modelos definen las colecciones que se guardarán en la base de datos.
+
+Aunque no es obligatorio, podemos crear un type para tipar los datos del modelo. En este caso, es necesario indicar el tipo base de Mongoose (Puede ser type o interface) : 
+    export type ProjectType = Document & {
+        projectName: string
+        clientName: string
+        description: string
+    }
+
+El schema define la estructura del documento dentro de la colección. Además del tipo de dato, podemos especificar si es obligatorio, eliminar espacios en blanco, o hacerlo único, entre otros.
+    const ProjectSchema = new Schema({
+        projectName: { type: String, require: true, trim: true },
+        clientName: { type: String, require: true, trim: true },
+        description: { type: String, require: true, trim: true }
+    })
+
+Finalmente, se crea y exporta una representación del esquema en la base de datos para interactuar con la colección, indicando el nombre y el Schema.
+Si se desea tipar, se indica el type creado.
+    const Project = mongoose.model<ProjectType>('Project', ProjectSchema)
+    export default Project
+
+- Estrucuta (MVC)
+
+Este proyecto usa la arquitectura Modelo–Vista–Controlador (MVC) para separar responsabilidades:
+    - Modelo: Maneja la interacción con la base de datos.
+    - Vista: Controla el renderizado y la parte visual.
+    - Controlador: Gestiona la comunicación entre modelo y vista.
+
+En este caso, los controladores se definen como clases con métodos estáticos que manejan las peticiones HTTP.
+    export class ProjectController {
+        static getAllProjects = async (req: Request, res: Response) => {
+            return res.json('Todos los proyectos')
+        }
+    }
+
+Las clases se vinculan a las rutas, donde se especifican los endpoints y sus métodos.
+    const router = Router()
+    router.get('/', ProjectController.getAllProjects)
+    export default router
+
+Finalmente, las rutas se importan en el servidor principal, definiendo un prefijo común para agrupar los endpoints.
+    app.use('/api/projects', projectRoutes)
+
+La razon del uso de clases con métodos estáticos fue para la mejora de organización y escalabilidad del proyecto.
+Permite agrupar todas las operaciones de un mismo recurso (por ejemplo, ProjectController) en un solo lugar, facilitando el mantenimiento y lectura del código.
+
+- Relacionar colecciones (Project <-> Task)
+
+En MongoDB no existen relaciones como en bases SQL, pero Mongoose permite referenciar documentos entre colecciones usando ObjectId.
+En este proyecto, un Project puede tener varias Tasks, y cada Task pertenece a un solo Project.
+Esto se implementa con referencias (ref) y arreglos de ObjectId.
+
+Task -> referencia a Project (muchas tareas pertenecen a un proyecto)
+    project: {
+        type: Types.ObjectId,
+        ref: 'Project'
+    }
+
+project guarda el ObjectId del proyecto al que pertenece la tarea.
+ref: 'Project' indica a Mongoose qué modelo debe usar al hacer populate.
+Esto crea una relación 1 proyecto → N tareas
+
+Project -> Lista de Task (un proyecto tiene muchas tareas)
+    tasks: [
+        {
+            type: Types.ObjectId,
+            ref: 'Task'
+        }
+    ]
+
+tasks es un arreglo que almacena los ObjectId de las tareas asociadas.
+No guarda las tareas completas, solo sus IDs.
+Permite usar populate() para obtener las tareas completas cuando se necesiten
+El tipo en TypeScript, usando PopulatedDoc, permite que Mongoose reemplace los IDs con documentos completos cuando se use populate.
+
+Task guarda el ID del Project → pertenece a un proyecto.
+Project guarda un arreglo de IDs de Task → contiene muchas tareas.
+ref indica a Mongoose qué modelo buscar al hacer populate().
+ObjectId es la clave de relación entre ambos documentos.
+
+- Estados
+Dentro de la aplicación, las tareas manejan distintos estados (pending, onHold, inProgress, underReview, completed). Normalmente se usaría un enum, pero en este caso se implementa un objeto que funciona como diccionario de estados.
+
+Se crea un objeto con todos los posibles estados y se marca como as const para que sus valores sean de solo lectura:
+    const taskStatus = {
+        PENDING: 'pending',
+        ON_HOLD: 'onHold',
+        IN_PROGRESS: 'inProgress',
+        UNDER_REVIEW: 'underReview',
+        COMPLETED: 'completed'
+    } as const
+
+
+A partir de este objeto se puede generar un type utilizando keyof typeof taskStatus, obteniendo únicamente los valores definidos.
+    export type TaskStatus = typeof taskStatus[keyof typeof taskStatus]
+
+Finalmente, este campo se incluye también en el esquema de Mongoose, limitando sus valores al diccionario definido y asignando un valor por defecto:
+    status: {
+        type: String,
+        enum: Object.values(taskStatus),
+        default: taskStatus.PENDING
+    }
+
+- Nested Resource Routing (Enrutamiento de recursos anidados)  
+
+Patrón de diseño usado en APIs RESTful para expresar relaciones jerárquicas entre recursos mediante la estructura de la URL.
+    /projects/:projectId/tasks → Tareas pertenecientes a un proyecto específico.
+    /proyectos/{proyecto}/tareas → Proyecto específico y sus tareas.
+    
+En lugar de usar únicamente /tasks y validar el proyecto de forma interna u oculta, la relación se expresa directamente en la ruta. Esto permite:
+    * Verificar que el proyecto existe 
+    * Verificar los permisos del usuario
+    * Crear tareas asociadas al proyecto correcto
+
+Estas validaciones se realizan en middlewares, ya que se ejecutan durante la petición HTTP y antes del controlador, 
+lo que los convierte en el lugar ideal para comprobar la existencia del recurso y los permisos del usuario.
+
+Cuando múltiples recursos dependen de un proyecto (por ejemplo, proyectos y sus tareas), es común necesitar verificar repetidamente si dicho proyecto existe. 
+Para evitar copiar y pegar la misma validación en distintos controladores,se aplica el principio de separación de responsabilidades.
+
+En lugar de concentrar toda la lógica en los controladores, se crea un middleware que se encarga únicamente de validar la existencia del proyecto, 
+dejando el resto de la lógica en su controlador correspondiente.
+    export async function validateProjectExist( req: Request, res: Response, next: NextFunction) {
+        try {
+            const { projectId } = req.params
+            const project = await Project.findById(projectId)
+
+            if (!project) {
+            return res.status(404).json({ error: 'Proyecto no encontrado' })
+            }
+
+            // Se adjunta el proyecto a la petición para su uso posterior
+            req.project = project
+            next()
+        } catch {
+            res.status(500).json({ error: 'Hubo un error' })
+        }
+    }
+
+La comunicación entre el middleware y el controlador es posible gracias a la extensión de la interfaz Request de Express. Al agregar un nuevo atributo tipado, req puede utilizarse como punto de comunicación entre ambos.
+    declare global {
+        namespace Express {
+            interface Request {
+            project: IProject
+            }
+        }
+    }
+
+Este enfoque mantiene un tipado consistente en toda la aplicación y evita el uso de propiedades no declaradas en req.
+
+Siguiendo el flujo de ejecución de JavaScript (de arriba hacia abajo), el middleware se ejecuta antes del controlador:
+    router.post(
+        '/:projectId/tasks',
+        validateProjectExist, // Middleware
+        TaskController.createTask // Controlador
+    )
+
+Si el middleware falla, el controlador no se ejecuta. Además, este mismo middleware puede reutilizarse en múltiples rutas y con diferentes URLs siempre que sea necesario validar la existencia de un proyecto.
+
+- Unir información de colecciones relacionadas (populate)
+Por defecto, al consultar una colección en MongoDB solo se obtiene la información almacenada directamente en ella. Sin embargo, cuando existen relaciones entre colecciones, 
+puede ser necesario incluir datos del documento relacionado en una sola petición.
+
+En este proyecto, cada tarea pertenece a un proyecto. Esta relación se define en el modelo Task mediante una referencia (ref) al modelo Project:
+    project: {
+        type: Types.ObjectId,
+        ref: 'Project'
+    }
+
+Gracias a esta referencia, Mongoose permite usar el método populate para reemplazar el ObjectId almacenado en project por el documento completo del proyecto asociado.
+
+Ejemplo sin populate
+Obtiene únicamente las tareas cuyo campo project coincide con el ID indicado. El campo project seguirá siendo un ObjectId:
+    const tasks = await Task.find({ project: req.project.id })
+    res.json({ tasks })
+
+Ejemplo con populate
+Además de las tareas, Mongoose consulta la colección projects y sustituye el ObjectId por el documento del proyecto relacionado:
+    const tasks = await Task
+        .find({ project: req.project.id })
+        .populate('project')
+
+    res.json({ tasks })
+
+El argumento 'project' no es el nombre de la colección, sino el nombre del campo en el esquema de Task que contiene la referencia. Mongoose usa el valor de ref: 'Project' para saber qué modelo consultar internamente.
+
+- Router Params (router.param)
+En las rutas relacionadas con tareas, es necesario validar previamente que el proyecto al que pertenecen exista, ya que todas dependen de un projectId.
+Inicialmente, esta validación puede aplicarse manualmente en cada endpoint usando el middleware de validacion de proyecto (linea: 146):
+    router.post('/:projectId/tasks',
+        validateProjectExist,
+        TaskController.createTask
+    )
+
+    router.get('/:projectId/tasks',
+        validateProjectExist,
+        TaskController.getProjectTasks
+    )
+
+    router.get('/:projectId/tasks/:taskId',
+        validateProjectExist,
+        TaskController.getTaskById
+    )
+
+Aunque este enfoque funciona, genera repetición de código y reduce la legibilidad.
+
+Express ofrece el método router.param() para manejar este tipo de casos.
+Este método permite ejecutar una función antes de cualquier ruta que contenga un parámetro específico.
+
+Recibe dos argumentos:
+1. Nombre del parámetro (debe coincidir con el definido en la URL).
+2. Callback que se ejecutará automáticamente cada vez que ese parámetro esté presente.
+    router.param('projectId', validateProjectExist)
+
+A partir de este momento, validateProjectExist se ejecutará automáticamente en todas las rutas que incluyan :projectId, sin necesidad de declararlo manualmente en cada una
+
+Ahora las rutas se simplifican de la siguiente manera:
+
+    router.param('projectId', validateProjectExist)
+
+    router.post('/:projectId/tasks', 
+        TaskController.createTask
+    )
+
+    router.get('/:projectId/tasks',
+        TaskController.getProjectTasks
+    )
+
+    router.get('/:projectId/tasks/:taskId',
+        TaskController.getTaskById
+    )
+
+Resumen:
+router.param() permite centralizar validaciones basadas en parámetros de ruta.
+Se ejecuta antes del controlador correspondiente.
+Reduce duplicación de código y mejora la legibilidad.
+Solo se aplica a rutas que compartan el mismo nombre de parámetro.
+
+--- Notas Generales --- 
+- Para acceder a las variables de dotenv desde cualquier lugar del proyecto, necesitamos crear una instancia en server.ts
+- Podemos usar Clases y metodos estaticos para agrupar funciones relacionadas a un mismo metodo HTTP.
+- Recuerda habilitar la lectura de JSON desde el server.ts mediante app.use(express.json())
+- Las validaciones con express-validator van en las rutas para dejar los controladores mas limpios
+- El archio de handleValidator recibe los datos de cada peticion a traves de la importacion de validationResult
+- Moongose utiliza su propia version de un id, sin embargo, express-validator puede validar por ese formato mediante isMongoId()
+- Expres validator permite validar el cuerpo de una peticion y las variables en una URL mediante, body y param respectivamente
+- Las validaciones de express-validator se leen de arriba hacia abajo, por lo que si alguna falla no se ejecuta el metodo del controlador (HTTP)
+- Un Middleware y un Controlador se complementan, puedes terner validaciones en el primero, y seguir con la logica en el controlador, incluso, pasar datos entre ellos mediante interfaces globales (router.post('/:projectId/tasks))
+- Para funciones await cuya ejecución no depende de otro await podemos ejecutar todos al mismo tiempo con Promise.allSettled([])
+- Cuando vayas a comparar datos (task.project !== req.project.id) asegurate de igualarlos con toString() ya que Mongo regresa el texto como un Objeto y mientras que el argumento de req es texto plano.
+- En la linea 13 de TaskController tenemos doble await, debido a uno guarda la tarea creada y el otro guarda el ID de la terea DENTRO de la coleccion de proyectos en su respectivo proyecto. 
+- router.param en projectRoutes.ts, solo puede ejecutar una sola funcion, si queremos ejecutar mas funciones validando el mismo parametro deberemos hacerlo de nuevo justo lo que sucede con: router.param('taskId', taskExists) y router.param('taskId', belongsToProject)
+- RECUERDA QUE EL PROYECTO SI VALIDA, SI EL PROYECTO EXISTE, SI LA TAREA EXISTE Y SI LA TAREA PERTENECE AL PROYECTO, TODO ESTO ESTA EN LOS MIDDLEWARE, ES POR ESO QUE LAS FUNCIONES EN LOS ARCHIVOS DE CONTROLADORES SON MUY CORTAS. ESTOS MIDDLEWARE SE APLICAN DIRECTAMENTE EN LAS RUTAS
+- RECUERDA QUE, EL CONTROLADOR DE TASK TIENE MEJORES PRACTICAS QUE EL DE PROJECT, ESTO PARA TENER AMBOS PUNTOS DE VISTA, EN CASO DE NO PODER HACERLO DE LA MANERA MAS LIMPIA, ALMENOS HACERLO FUNCIONAR.
+- Postman y demas herramientas de testeo de APIs tienen una ruta de UNDEFINED.
+- En caso de querer testear la API en nuestra aplicacion y en Postman al mismo tiempo, podemos crear un script que levante el proyecto y envie un argumento a la consola.
+    - "dev:api": "nodemon --exec ts-node src/index.ts --api"
+    Despues capturamos ese argumento, para especificar en una condicion que al existir dicho argumento agregue a la lista blanca de CORS las rutas con origin UNDEFINED.
+        if(process.argv[2] === '--api'){
+                whiteList.push(undefined)
+            } 

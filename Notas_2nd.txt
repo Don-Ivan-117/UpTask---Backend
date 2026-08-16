@@ -1,0 +1,339 @@
+--- Comandos ---
+    - pnpm add bcrypt
+    - pnpm add -D @types/bcrypt
+    - pnpm add nodemailer   
+    - pnpm add i -D @types/nodemailer
+    - pnpm add jsonwebtoken
+    - pnpm add -D @types/jsonwebtoken 
+
+--- Autenticación ---
+Existen distintos métodos de autenticación:
+
+- Correo y contraseña (método utilizado en el proyecto)
+- Mensaje SMS
+- Huella digital, reconocimiento facial o voz
+
+## Estructura general
+1. Se crea un modelo para almacenar la información del usuario (`User.ts`).
+2. Se crea un archivo de rutas dedicado a la autenticación (`authRoutes.ts`).
+3. Las rutas de autenticación se registran en `server.ts` antes de las rutas principales del proyecto:
+    app.use('/api/auth', authRoutes)
+    app.use('/api/projects', projectRoutes)
+4. Se crea un controlador encargado de gestionar la lógica de autenticación (AuthController.ts).
+
+El controlador de autenticación contempla procesos como:
+    - Registro de usuarios
+    - Inicio de sesión
+    - Confirmación de cuentas
+    - Generación de tokens
+    - Encriptación y validación de contraseñas
+    - Envío de correos electrónicos
+
+La lógica se divide en distintos módulos para mejorar la legibilidad del código y mantener una correcta separación de responsabilidades.
+
+## Flujo de implementación : Creación de cuenta y validación de token (createAccount)
+    - Capturar la información del usuario
+    - Encriptar la contraseña
+    - Generar un token de confirmación
+    - Asociar el token al usuario
+    - Enviar un correo de confirmación
+    - Guardar el usuario y el token en la base de datos
+
+## Flujo de implementación : Confirmación de cuenta (confirmAccount)
+    - Capturar el token ingresado por el usuario
+    - Verificar que el token exista
+    - Buscar al usuario asociado al token
+    - Confirmar la cuenta del usuario
+    - Guardar los cambios
+    - Eliminar el token utilizado
+
+## Flujo de implementación : Inicio de sesión (login)
+    - Capturar el correo y contraseña del usuario
+    - Verificar que el usuario exista
+    - Verificar que la cuenta esté confirmada
+        - De no estar confirmado:
+            - Generar un nuevo token
+            - Asociar el token al usuario
+            - Enviar un nuevo correo de confirmación
+    - Validar la contraseña
+    - Permitir el acceso a la aplicación
+
+## Flujo de implementación : Restablecer contraseña (forgotPassword)
+    - Verificar que el usuario existe
+        - Si esta confirmado:
+            - Se le envia un token con una duracion de 15 minutos
+            - El token se envia via Gmail
+            - El token debe ser ingresado en el enlace adjunto dentro del mismo correo con el token
+            - Se redirige a una pagina para restablecer su contraseña
+
+## Flujo de implementación: Autenticación con JWT (login_cuenta_confirmada)
+    - Capturar el correo y contraseña del usuario.
+    - Validar las credenciales.
+    - Si son correctas, genera un JWT que contiene la información mínima necesaria (Payload).
+    El cliente almacena el token y lo envía en cada petición protegida.
+    El servidor verifica la firma del JWT utilizando JWT_SECRET.
+    Si la firma es válida y el token no ha expirado, la petición continúa; de lo contrario, se rechaza.
+        
+--- MongoDB ---
+
+--- bcrypt ---
+bcrypt es una librería utilizada para encriptar información sensible antes de almacenarla en la base de datos, comúnmente contraseñas.
+Para generar el hash de una contraseña, primero se define un salt, el cual determina la complejidad de la encriptación.
+Mientras mayor sea su valor, más segura será la encriptación, aunque también aumentará el consumo de recursos. Generalmente, se recomienda utilizar un valor de 10 como equilibrio entre seguridad y rendimiento.
+    const salt = await bcrypt.genSalt(10)
+
+Con el salt generado, es posible crear funciones auxiliares para encriptar datos, como contraseñas.
+    export const hashPassword = async (password: string) => {
+        const salt = await bcrypt.genSalt(10)
+        return await bcrypt.hash(password, salt)
+    }
+
+--- Token ---
+Los tokens son códigos temporales utilizados para validar la identidad de un usuario y permitir el acceso a determinadas funcionalidades dentro de una aplicación.
+En este proyecto, los tokens se almacenan en una colección independiente de MongoDB, por lo que cuentan con su propio modelo.
+
+El modelo de token requiere los siguientes campos:
+    - token
+    - user
+    - createdAt
+
+La generación del token es sencilla. En este caso, consiste en un código aleatorio de 6 dígitos generado mediante una función auxiliar.
+El campo `createdAt` se genera automáticamente a partir de la configuración del modelo, por lo que únicamente es necesario asociar el token al usuario correspondiente.
+Durante el proceso de registro, una misma función puede encargarse de:
+    - Capturar los datos del usuario
+    - Encriptar la contraseña
+    - Crear el usuario
+    - Generar el token de verificación
+    - Asociar el token al usuario
+
+De esta manera, el token se crea desde el inicio del flujo de registro.
+    const { password, email } = req.body
+
+    const user = new User(req.body)
+    user.password = await hashPassword(password)
+
+    const token = new Token()
+    token.token = generateToken()
+    token.user = user.id
+
+--- Express Validator --- 
+Además de las validaciones convencionales que ofrece la librería, también es posible crear validaciones personalizadas.
+
+Por ejemplo, al confirmar una contraseña, podemos aplicar las reglas habituales al campo principal y utilizar una validación personalizada para comprobar que ambos valores coincidan.
+    // Validamos que la contraseña tenga un mínimo de 8 caracteres
+    body('password')
+        .isLength({ min: 8 })
+        .withMessage('El password es muy corto, mínimo 8 caracteres')
+
+    // Validamos que ambas contraseñas sean iguales
+    body('password_confirmation').custom((value, { req }) => {
+        if (value !== req.body.password) {
+            throw new Error('Los Password no son iguales')
+        }
+
+        return true
+    })
+
+    value: contiene el valor ingresado en password_confirmation.
+    req: permite acceder al cuerpo completo de la petición, incluyendo el valor de password.
+    return true: indica que la validación fue exitosa y permite continuar el flujo del endpoint.
+
+--- JSON Web Tokens (JWT) ---
+JSON Web Token (JWT) es un estándar abierto (RFC 7519) que define un formato compacto y autocontenido para transmitir información entre dos partes mediante un objeto JSON firmado digitalmente.
+Un JWT está compuesto por tres partes:
+    - Header:  Contiene el tipo de token (JWT) y el algoritmo de firma utilizado.
+    - Payload: Contiene la información o "claims", como el id del usuario, roles,
+    permisos y fecha de expiración.
+    ¡¡¡Importante!!!: El contenido del Payload no está cifrado, únicamente está codificado en Base64URL. Cualquier persona que tenga el token puede leer su contenido, por lo que nunca deben almacenarse datos sensibles como contraseñas o información confidencial.
+    - Signature: Es la firma digital generada a partir del Header, Payload y una clave
+    secreta (o privada). Permite verificar que el token no ha sido alterado.
+
+Claims: Los Claims son los datos almacenados dentro del Payload.
+Existen tres tipos:
+    - Registered Claims
+        - sub, iss, aud, exp, iat, nbf, jti.
+    - Public Claims
+        - Definidos por el desarrollador.
+    - Private Claims
+        - Utilizados entre aplicaciones específicas.
+
+* JWT utiliza algoritmos de firma digital para asegurar que los datos no han sido alterados durante la transmision. La firma garantiza la integridad del token, pero no cifra su contenido. 
+Cualquier persona puede leer el Header y el Payload; únicamente la Signature evita que sean modificados sin ser detectados.
+
+* Autenticado y autorizado: JWT se utiliza comúnmente durante los procesos de autenticación y autorización. Después de que un usuario inicia sesión correctamente, el servidor genera un token que 
+contiene información como su identificador, roles o permisos. En cada solicitud posterior, el cliente envía ese token y el servidor verifica su firma antes de permitir el acceso a los recursos protegidos.
+
+* JWT es un formato compacto, se puede transmitir facilmente a traves de diferentes medios, como encabezados HTTP, URL o incluso en el cuerpo de un solicitud HTTP, lo cual lo hace excelente para aplicaciones web.
+
+* JWT es un mecanismo stateless, lo que significa que el servidor no necesita almacenar información de sesión para identificar al usuario. Toda la información necesaria para validar la autenticación viaja dentro del token.
+NOTA: Aunque JWT es stateless, algunas aplicaciones mantienen listas negras (blacklists) o mecanismos de revocación para invalidar tokens antes de su expiración.
+
+Generación de un JWT
+    import jwt from "jsonwebtoken" 
+    import { Types } from "mongoose"
+
+    type UserPayload = {
+        id: Types.ObjectId
+    }
+
+    export const generateJWT = (payload : UserPayload) => {
+        const token = jwt.sign(payload, process.env.JWT_SECRET, {
+            expiresIn: '180d'
+        })
+
+        return token
+    }
+
+La función jwt.sign() recibe tres parámetros principales:
+    - Payload: El primer parámetro corresponde a la información que será almacenada dentro del token.
+        - En este proyecto únicamente almacenamos el ID del usuario, ya que es suficiente para identificarlo posteriormente y comprobar que la cuenta existe y está confirmada.
+          Una buena práctica es almacenar únicamente la información mínima necesaria para identificar al usuario y autorizar sus solicitudes.
+    - Secret (Signature): El segundo parámetro (process.env.JWT_SECRET) es la clave secreta utilizada para firmar el token.
+        - Esta clave permite generar la Signature, una firma criptográfica que garantiza la integridad del JWT. Cuando el servidor recibe un token, vuelve a generar la firma utilizando el mismo secreto y verifica que ambas coincidan.
+          Si alguien modifica el contenido del Payload, la firma dejará de ser válida y el token será rechazado.
+          ¡¡¡Importante!!!: La clave secreta debe almacenarse en variables de entorno (.env) y nunca debe publicarse ni compartirse.
+    - Opciones de configuración: El tercer parámetro es un objeto de configuración que permite personalizar el comportamiento del JWT. Existen muchas opciones disponibles, como:
+        - expiresIn: tiempo durante el cual el token será válido.
+        - issuer: identifica quién emitió el token.
+        - audience: especifica quién puede utilizarlo.
+        - subject: identifica el sujeto del token.
+        - jwtid: asigna un identificador único al JWT.
+
+Implementación de un JWT
+Ahora que contamos con una función capaz de generar un JSON Web Token (JWT), el siguiente paso es integrarlo al flujo de autenticación de la aplicación.
+
+Generar el token durante el inicio de sesión
+El primer paso consiste en invocar la función que genera el JWT desde aquellos métodos del controlador que autentican al usuario.
+    static login = async (req: Request, res: Response) => {
+        try { 
+            ... 
+            const token = generateJWT({ id: user.id }) 
+            res.send(token) 
+        } catch (error) { 
+            ... 
+        } 
+    }
+Una vez que las credenciales han sido verificadas correctamente, el servidor genera un nuevo JWT utilizando el identificador del usuario y lo envía como respuesta al cliente.
+A partir de este momento, será responsabilidad del cliente almacenar dicho token y enviarlo en cada petición que requiera autenticación.
+
+Verificando la identidad del usuario
+Generar un JWT es únicamente la primera parte del proceso. Lo realmente importante ocurre cuando el cliente intenta acceder a recursos protegidos.
+
+Cada vez que el frontend realiza una petición a una ruta privada, debe enviar el token generado previamente. El backend verificará que:
+    - El token exista.
+    - La firma sea válida.
+    - El token no haya expirado.
+    - El usuario asociado continúe existiendo en la base de datos.
+Si cualquiera de estas validaciones falla, la petición será rechazada.
+
+Protegiendo rutas mediante un Middleware
+Supongamos una aplicación para la administración de proyectos.
+No cualquier usuario debería tener permisos para crear nuevos proyectos, por lo que antes de ejecutar el controlador es conveniente verificar que el usuario se encuentre autenticado.
+Para ello se utiliza un Middleware.
+    router.post( '/', 
+        authenticate, -> JWT middleware
+        body('projectName') .notEmpty() .withMessage('El nombre del proyecto es obligatorio'), 
+        body('clientName') .notEmpty() .withMessage('El nombre del cliente es obligatorio'), 
+        body('description') .notEmpty() .withMessage('La descripción es obligatoria'), 
+        handleInputErrors, 
+        projectController.createProject)
+
+JavaScript ejecuta los Middlewares en el mismo orden en que fueron registrados.
+Entonces, el flujo será el siguiente:
+    - Se ejecuta authenticate.
+    - Si la autenticación es correcta, continúa con las validaciones.
+    - Si todas las validaciones son correctas, finalmente se ejecuta createProject.
+
+De esta manera se evita que usuarios no autenticados puedan acceder a funcionalidades protegidas.
+
+Envío del JWT
+Los JWT no se envían como parámetros en la URL.
+La forma correcta de enviarlos es mediante el encabezado Authorization, utilizando el esquema Bearer.
+    - Authorization: Bearer <JWT>
+Por esta razón el Middleware comienza obteniendo dicho encabezado.
+
+Middleware de autenticación
+    export const authenticate = async (req: Request, res: Response, next: NextFunction) => {
+        const bearer = req.headers.authorization
+        if(!bearer){
+            const error = new Error('No autorizado')
+            return res.status(401).json({error: error.message})
+        }
+        
+        const [, token] = bearer.split(' ')
+
+        try {
+            const decoded = jwt.verify(token, process.env.JWT_SECRET)
+
+            if(typeof decoded === 'object' && decoded.id){
+                const user = await User.findById(decoded.id).select('_id name email')
+                if(user){
+                    req.user = user
+                }else{
+                    res.status(500).json({error: 'Token No Válido'})
+                }
+            }
+        } catch (error) {
+            ...
+        }
+        next()
+    }
+
+El Middleware realiza las siguientes acciones:
+    - Obtiene el encabezado Authorization ( const bearer = ... ).
+    - Comprueba que exista un token.
+    - Extrae el JWT eliminando el prefijo Bearer.
+    - Verifica la firma utilizando JWT_SECRET.
+    - Comprueba que el token no haya sido alterado y continúe siendo válido.
+    - Recupera el usuario asociado al identificador almacenado en el Payload.
+    - Si el usuario existe, lo almacena en req.user para que los siguientes Middlewares o controladores puedan acceder a su información.
+    - Finalmente, ejecuta next() para continuar con el flujo de la petición.
+
+Si la función generateJWT() ya genera un token con la información del usuario al iniciar sesión, ¿Por qué consultar nuevamente la base de datos?
+Aunque el JWT contiene el identificador del usuario, esto no garantiza que dicho usuario siga existiendo o continúe teniendo acceso al sistema.
+
+Consultar la base de datos permite verificar que la cuenta siga siendo válida y obtener la información actualizada del usuario. De esta forma, 
+el controlador puede trabajar directamente con req.user sin necesidad de realizar una nueva búsqueda.
+
+¡¡¡Importante!!!: En este ejemplo el JWT únicamente almacena el identificador del usuario. Los permisos o roles se consultan posteriormente desde la base de datos, 
+lo que evita confiar en información que podría quedar desactualizada dentro del token.
+
+
+--- Notas Generales --- 
+- RECUERDA que solo los valores establecidos en el modelo son los que se guardaran en la base de datos de Mongo, algunos como password_confirmation solo existen para validar un campo que si se va almacenar.
+- En caso de que tengas que elegir una libreria para un proyecto, siempre asegurarse de tres cosas:
+    - Que no este descontinuada
+    - Que reciba actualizaciones constantes
+    - Que tenga soporte de la comunidad (que sea muy usada y por ende descargada de npm)
+- Recuerda que para usar la web de Mailtrap primero es necesario instalar nodemailer en el proyecto y crear su archivo de configuracion (nodemailer.ts) con las credenciales que genera la pagina.
+- Podemos redirigir al usuario a nuestra pagina web, desde el correo mediante la siguiente linea:
+    - <a href="${process.env.FRONTEND_URl}/auth/confirm-account">Confirmar cuenta</a>
+- En el schema de Token, pese a que el curso menciona usar como valor por defecto Date.now(), realmente la mejor opcion es Date.now:
+    - default: Date.now() -> ejecuta la función una sola vez cuando se crea el esquema, por lo que todos los documentos podrían recibir la misma fecha.
+    - default: Date.now -> ejecuta la función cada vez que se crea un documento nuevo.
+- Para usar JWT hay dos funciones fundamentales(En ambos casos se debe usar la contraseña o palabra en clave (.env) para la creacion y verificacion):
+    - jwt.sign() // Crear el token
+    - jwt.verify() // Verificar autenticidad del token
+- En express puedes pasar valores entres distintos archivos del backend usando req (middlewawre/auth.ts -> controllers/AuthController.ts)
+- Cuando enviemos una peticion con token, y en consola salga "Undefined" significa que nuestro token ya no es valido
+- Cada veas un req.user, recuerda que modificamos el interface de req: Request, y que dicho usuario se almacena al inciar sesion y se queda ahi hasta que sea sobreescrito.
+- Cuando veas una linea similar, es unicamente para igular comparaciones, recuerda que los IDs de Mongo no son cadenas ni numeros sino, ObjectId:
+    - project.manager.toString() !== req.user.id.toString()
+- Cuando varias lineas de codigo se repiten en multiples metodos es mejor crear un middleware, pero, esto no siempre sucede, cuando se trata de consultar la base de datos, a veces...
+  lo mejor es copiar y pegar:
+    - 
+- Al momento de traer los proyectos, si cada usuario únicamente debe visualizar los proyectos que administra, basta con filtrar los resultados utilizando el identificador del usuario autenticado.
+    static getAllProjects = async (req: Request, res: Response) => {
+        try {
+            const projects = await Project.find({
+                manager: req.user.id -> Busca todos los proyectos cuyo campo manager sea igual al valor de req.user.id
+            })
+            res.json(projects)
+        } catch (error) {
+            ...
+        }
+    }
+    De esta forma, la base de datos devuelve únicamente los proyectos asociados al usuario autenticado (mediante el JWT), evitando traer información innecesaria y reduciendo la complejidad de la lógica en el controlador.
+- Dentro del objeto de scripts del package.json, puedes usar el comando de ejecucion de cualquiera de los scripts dentro del mismo objeto y usarlo en un nuevo script.
+- Iniciar el proyecto de manera manual:
+    - pnpm exec nodemon --exec ts-node src/index.ts
