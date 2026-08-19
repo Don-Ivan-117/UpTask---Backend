@@ -1,0 +1,2 @@
+--- Dependencias ---
+    - pnpm add -D jest ts-jest @types/jest supertest @types/supertest
