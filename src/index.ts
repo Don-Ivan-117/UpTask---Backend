@@ -1,8 +1,16 @@
 import colors from 'colors'
-import server from './server'
+import { connectDB } from './config/db'
+import app from './server'
 
 const port = process.env.PORT || 4000
 
-server.listen(port, () => {
-    console.log(colors.cyan.bold(`REST API desde el puerto: ${port}`));
-})
+const startServer = async () => {
+    await connectDB()
+
+    app.listen(4000, () => {
+        console.log(colors.cyan.bold(`REST API desde el puerto: ${port}`))
+    })
+    
+}
+
+startServer()

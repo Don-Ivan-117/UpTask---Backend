@@ -6,7 +6,7 @@ export const corsConfig : CorsOptions = {
         const whiteList = [process.env.FRONTEND_URL]
 
         // Atrapar argumento y agregar undefined a las lista blanca al levantar el servidor en modo de desarrollo API
-        if(process.argv[2] === '--api'){
+        if(process.argv[2] === '--api' || process.env.NODE_ENV === 'test'){
             whiteList.push(undefined)
         } 
 

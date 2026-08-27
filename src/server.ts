@@ -1,4 +1,3 @@
-import { connectDB } from './config/db'
 import { corsConfig } from './config/cors'
 import type { Express } from 'express'
 import cors from 'cors'
@@ -9,8 +8,6 @@ import projectRoutes from './routes/projectRoutes'
 import morgan from 'morgan'
 
 dotenv.config()
-
-connectDB()
 
 const app: Express = express()
 // Habilitar la configuracoin de CORS
